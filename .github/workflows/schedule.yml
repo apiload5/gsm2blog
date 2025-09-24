@@ -1,0 +1,41 @@
+name: GSM2Blogger Scheduled Post
+on:
+  schedule:
+    - cron: '0 * * * *'   # every hour (UTC). Change as needed.
+  workflow_dispatch:
+
+jobs:
+  run:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+
+      - name: Install deps
+        run: npm ci
+
+      - name: Create .env
+        run: |
+          cat > .env <<EOF
+          OPENAI_API_KEY=${{ secrets.OPENAI_API_KEY }}
+          CLIENT_ID=${{ secrets.CLIENT_ID }}
+          CLIENT_SECRET=${{ secrets.CLIENT_SECRET }}
+          REFRESH_TOKEN=${{ secrets.REFRESH_TOKEN }}
+          BLOG_ID=${{ secrets.BLOG_ID }}
+          GSMARENA_RSS=${{ secrets.GSMARENA_RSS }}
+          OPENAI_MODEL=${{ secrets.OPENAI_MODEL }}
+          MAX_ITEMS_PER_RUN=${{ secrets.MAX_ITEMS_PER_RUN }}
+          DB_PATH=./data/posts.db
+          EOF
+
+      - name: Ensure persistence dir
+        run: mkdir -p data
+
+      - name: Run app
+        run: node app.js
+        
