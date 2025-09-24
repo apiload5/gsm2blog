@@ -1,0 +1,4 @@
+rss-parser
+openai
+googleapis
+dotenv
