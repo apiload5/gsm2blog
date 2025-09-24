@@ -1,1 +1,32 @@
+# Node modules (bohot heavy hote hain, dubara npm install se aa jate hain)
+node_modules/
+
+# Environment files (isme API keys hoti hain)
+.env
+.env.local
+.env.*.local
+
+# Logs
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+pnpm-debug.log*
+*.log
+
+# SQLite database (agar DB_PATH use kar rahe ho)
+*.db
+*.sqlite
+*.sqlite3
+
+# Posted history (agar JSON ya DB me store kar rahe ho)
+posted.json
+data/
+
+# OS-specific junk files
+.DS_Store
+Thumbs.db
+
+# Build artifacts
+dist/
+build/
 
