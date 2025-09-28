@@ -24,6 +24,14 @@ jobs:
         with:
           node-version: '20'
 
+      # 👇 یہ step پہلے package-lock.json generate کرے گا اگر missing ہو
+      - name: Generate package-lock.json if missing
+        run: |
+          if [ ! -f package-lock.json ]; then
+            echo "No package-lock.json found, generating with npm install..."
+            npm install --package-lock-only
+          fi
+
       - name: Install dependencies
         run: npm ci
 
@@ -41,5 +49,15 @@ jobs:
           mkdir -p data
           node app.js
 
-      
+      - name: Commit DB / posted.json back to repo (if changed)
+        run: |
+          git config user.name "GSM2Blogger Bot"
+          git config user.email "noreply@github.com"
+          git add data/posts.db data/posted.json package-lock.json || true
+          if git diff --cached --quiet; then
+            echo "No DB changes to commit"
+          else
+            git commit -m "chore: update DB & lockfile [skip ci]" || true
+            git push origin HEAD:${{ github.ref_name }}
+          fi
           
