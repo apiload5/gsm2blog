@@ -24,7 +24,6 @@ jobs:
         with:
           node-version: '20'
 
-      # 👇 یہ step پہلے package-lock.json generate کرے گا اگر missing ہو
       - name: Generate package-lock.json if missing
         run: |
           if [ ! -f package-lock.json ]; then
