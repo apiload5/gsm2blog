@@ -25,8 +25,7 @@ jobs:
           node-version: '20'
 
       - name: Install dependencies
-        run: npm install
-  
+        run: npm ci
 
       - name: Run app (once)
         env:
@@ -42,14 +41,5 @@ jobs:
           mkdir -p data
           node app.js
 
-      - name: Commit DB / posted.json back to repo (if changed)
-        run: |
-          git config user.name "github-actions[bot]"
-          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
-          git add data/posts.db data/posted.json || true
-          if git diff --cached --quiet; then
-            echo "No DB changes to commit"
-          else
-            git commit -m "chore: update posted DB from action run [ci skip]" || true
-            git push origin HEAD:${{ github.ref_name }}
-          fi
+      
+          
