@@ -1,4 +1,4 @@
-# GSM2 Blog Auto-Content Publisher (GSMArena -> OpenAI -> Blogger)
+# gsm2blog Auto-Content (auto post create to blogger) Publisher (rss -> OpenAI -> Blogger)
 
 [![License: MIT](https://img.shields.io/badge/License-MIT-blue.svg)](https://opensource.org/licenses/MIT)
 [![Technology: Node.js](https://img.shields.io/badge/Technology-Node.js-339933.svg)]()
