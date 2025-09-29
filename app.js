@@ -1,7 +1,7 @@
 /**
  * app.js
  *
- * Hybrid GSMArena -> OpenAI -> Blogger autoposter (single-file advanced app)
+ * Hybrid GSMArena/Engadget -> OpenAI -> Blogger autoposter
  */
 
 import 'dotenv/config';
@@ -24,7 +24,7 @@ const CLIENT_SECRET = process.env.CLIENT_SECRET;
 const REFRESH_TOKEN = process.env.REFRESH_TOKEN;
 const BLOG_ID = process.env.BLOG_ID;
 
-const GSMARENA_RSS = process.env.GSMARENA_RSS; 
+const GSMARENA_RSS = process.env.GSMARENA_RSS;
 const POST_INTERVAL_CRON = process.env.POST_INTERVAL_CRON || '0 * * * *';
 const MAX_ITEMS_PER_RUN = parseInt(process.env.MAX_ITEMS_PER_RUN || '3', 10);
 const OPENAI_MODEL = process.env.OPENAI_MODEL || 'gpt-4o-mini';
@@ -71,7 +71,7 @@ function hasBeenPosted(guidOrLink) {
   return !!row;
 }
 function markPosted({ guid, link, title, published_at }) {
-  const stmt = db.prepare('INSERT OR IGNORE INTO posted (guid, link, title, published_at) VALUES (?, ?, ?, ?)');
+  const stmt = db.prepare('INSERT OR IGNORE INTO posted (guid, link, title, published_at) VALUES (?, ?, ?, ? )');
   stmt.run(guid, link, title, published_at || null);
 }
 
@@ -83,7 +83,7 @@ async function fetchPage(url) {
   try {
     const res = await axios.get(url, {
       headers: { 'User-Agent': USER_AGENT },
-      timeout: 12000
+      timeout: 15000
     });
     return res.data;
   } catch (e) {
@@ -105,21 +105,88 @@ function extractOgImage(html) {
   return null;
 }
 
-async function rewriteWithOpenAI({ title, snippet, content, lang = 'ur' }) {
-  const languageNote = lang === 'ur' ? 'Urdu (in Urdu/Urdu script)' : (lang === 'hi' ? 'Hindi (Devanagari)' : 'English');
-  const prompt = `You are a professional news editor. Rewrite the following GSMArena item into a short blog post suitable for publishing.\n- Keep the original title as reference.\n- Produce a 1-line hook (headline), then 3-6 sentences summary in ${languageNote}.\n- Make it unique, SEO-friendly, and avoid copying verbatim.\n- Return HTML-ready content only.`;
+function extractMainArticle(html) {
+  if (!html) return null;
+
+  // GSMArena
+  let match = html.match(/<div class=\"article-body\">([\s\S]*?)<\/div>/i);
+  if (match) return match[1];
+
+  // Engadget
+  match = html.match(/<div[^>]*class=[\"']o-article-blocks[\"'][^>]*>([\s\S]*?)<\/div>/i);
+  if (match) return match[1];
+
+  return null;
+}
+
+async function rewriteWithOpenAI({ title, snippet, content }) {
+  const prompt = `You are a professional tech journalist. Rewrite the following article into a **complete English news post** for a blog.\n\nRules:\n- Write in English only.\n- Use a clear headline (H1).\n- Add subheadings (H2/H3) where relevant.\n- Expand the article fully if input is short.\n- Remove all hyperlinks.\n- Do not include strange or unrelated content.\n- Ensure SEO-friendly and natural writing style.\n- Keep it unique but true to the facts.\n- Return valid HTML only.`;
 
   try {
     const completion = await openai.chat.completions.create({
       model: OPENAI_MODEL,
-      messages: [{ role: 'user', content: `${prompt}\n\nTitle: ${title}\n\nSnippet: ${snippet || ''}\n\nFull content:\n${content || ''}` }],
-      max_tokens: 900
+      messages: [{ role: 'user', content: `${prompt}\n\nTitle: ${title}\n\nSnippet: ${snippet || ''}\n\nContent:\n${content || ''}` }],
+      max_tokens: 1400
     });
-    const text = completion.choices?.[0]?.message?.content;
-    return text || '';
+    let text = completion.choices?.[0]?.message?.content || '';
+
+    // Remove unwanted ...html or hyperlinks
+    text = text.replace(/\.\.\.\s*html/gi, '');
+    text = text.replace(/<a [^>]*>(.*?)<\/a>/gi, '$1');
+
+    return text;
   } catch (err) {
     log('OpenAI error:', err?.message || err);
     throw err;
+  }
+}
+
+async function generateImageAlt(title, snippet, content) {
+  const prompt = `Generate a descriptive image alt text (5-10 words) that explains what the picture shows based on this article:\nTitle: ${title}\nSnippet: ${snippet}\nContent: ${content}\nOnly return alt text.`;
+
+  try {
+    const completion = await openai.chat.completions.create({
+      model: OPENAI_MODEL,
+      messages: [{ role: 'user', content: prompt }],
+      max_tokens: 40
+    });
+    return (completion.choices?.[0]?.message?.content || title).trim();
+  } catch (err) {
+    log('Alt error:', err?.message || err);
+    return title;
+  }
+}
+
+async function generateImageTitle(title, snippet, content) {
+  const prompt = `Generate a short SEO-friendly title text (3-6 words) for an image in this article:\nTitle: ${title}\nSnippet: ${snippet}\nContent: ${content}\nOnly return title text.`;
+
+  try {
+    const completion = await openai.chat.completions.create({
+      model: OPENAI_MODEL,
+      messages: [{ role: 'user', content: prompt }],
+      max_tokens: 20
+    });
+    return (completion.choices?.[0]?.message?.content || title).trim();
+  } catch (err) {
+    log('Title error:', err?.message || err);
+    return title;
+  }
+}
+
+async function generateTags(title, snippet, content) {
+  const prompt = `Generate 3-6 SEO-friendly tags for this article. Return as comma-separated keywords only.\nTitle: ${title}\nSnippet: ${snippet}\nContent: ${content}`;
+
+  try {
+    const completion = await openai.chat.completions.create({
+      model: OPENAI_MODEL,
+      messages: [{ role: 'user', content: prompt }],
+      max_tokens: 40
+    });
+    const tags = (completion.choices?.[0]?.message?.content || '').split(',').map(t => t.trim()).filter(Boolean);
+    return tags;
+  } catch (err) {
+    log('Tags error:', err?.message || err);
+    return [];
   }
 }
 
@@ -162,47 +229,52 @@ async function processOnce() {
 
       log('Processing new item:', title);
 
+      let snippet = item.contentSnippet || '';
+      let fullContent = item['content:encoded'] || item.content || snippet;
       let imageUrl = null;
-      const contentCandidates = item['content:encoded'] || item.content || item.contentSnippet || '';
-      imageUrl = extractFirstImageFromHtml(contentCandidates);
 
-      if (!imageUrl && link) {
+      if (link) {
         const pageHtml = await fetchPage(link);
         if (pageHtml) {
-          imageUrl = extractOgImage(pageHtml) || extractFirstImageFromHtml(pageHtml);
+          const extracted = extractMainArticle(pageHtml);
+          if (extracted) fullContent = extracted;
+          if (!imageUrl) imageUrl = extractOgImage(pageHtml) || extractFirstImageFromHtml(pageHtml);
         }
       }
+      if (!imageUrl) imageUrl = extractFirstImageFromHtml(fullContent);
 
       let rewrittenHtml = '';
       try {
-        rewrittenHtml = await rewriteWithOpenAI({ title, snippet: item.contentSnippet, content: contentCandidates, lang: 'ur' });
+        rewrittenHtml = await rewriteWithOpenAI({ title, snippet, content: fullContent });
       } catch (e) {
-        log('OpenAI failed for item, skipping:', title);
+        log('OpenAI rewrite failed:', title);
         continue;
       }
 
       let finalHtml = '';
       if (imageUrl) {
-        finalHtml += `<p><img src="${imageUrl}" alt="${escapeHtml(title)}" style="max-width:100%;height:auto" /></p>\n`;
+        const altText = await generateImageAlt(title, snippet, fullContent);
+        const titleText = await generateImageTitle(title, snippet, fullContent);
+        finalHtml += `<p><img src="${imageUrl}" alt="${escapeHtml(altText)}" title="${escapeHtml(titleText)}" style="max-width:100%;height:auto" /></p>\n`;
       }
       finalHtml += rewrittenHtml;
-      // ⚡ Source line removed completely to avoid any hyperlink or text.
+
+      const tags = await generateTags(title, snippet, fullContent);
 
       let posted;
       try {
-        posted = await createBloggerPost({ title, htmlContent: finalHtml });
+        posted = await createBloggerPost({ title, htmlContent: finalHtml, labels: tags });
       } catch (e) {
         log('Failed to post to Blogger for:', title);
         continue;
       }
 
       log('Posted to Blogger:', posted.url || posted.id || '(no url returned)');
-
       markPosted({ guid, link, title, published_at: item.pubDate || item.isoDate || null });
+      await sleep(2000);
 
-      await sleep(1500);
       if (MODE === 'once') {
-        log('MODE=once: exiting after one post to avoid mass-posting. Set MODE=cron to run continuously.');
+        log('MODE=once: exiting after one post.');
         return;
       }
     }
@@ -211,43 +283,26 @@ async function processOnce() {
   }
 }
 
-function sleep(ms) {
-  return new Promise((resolve) => setTimeout(resolve, ms));
-}
+function sleep(ms) { return new Promise(r => setTimeout(r, ms)); }
 
 function escapeHtml(text) {
   if (!text) return '';
-  return text.replace(/[&<>"']/g, (m) => {
-    switch (m) {
-      case '&': return '&amp;';
-      case '<': return '&lt;';
-      case '>': return '&gt;';
-      case '"': return '&quot;';
-      case "'": return '&#039;';
-      default: return m;
-    }
-  });
+  return text.replace(/[&<>"']/g, m => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#039;' }[m]));
 }
 
 async function start() {
   log('Starting GSM2Blogger', { MODE, OPENAI_MODEL, GSMARENA_RSS, DB_PATH });
-
   if (MODE === 'once') {
     await processOnce();
-    log('Finished single run (MODE=once). Exiting.');
+    log('Finished single run. Exiting.');
     process.exit(0);
   } else {
     log('Scheduling cron:', POST_INTERVAL_CRON);
     await processOnce();
-    cron.schedule(POST_INTERVAL_CRON, async () => {
-      log('Cron tick - running processOnce');
-      await processOnce();
-    });
+    cron.schedule(POST_INTERVAL_CRON, processOnce);
     process.stdin.resume();
   }
 }
 
-start().catch((e) => {
-  log('Fatal error in start():', e?.message || e);
-  process.exit(1);
-});
+start().catch(e => { log('Fatal error:', e?.message || e); process.exit(1); });
+  
