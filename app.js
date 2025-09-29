@@ -105,26 +105,9 @@ function extractOgImage(html) {
   return null;
 }
 
-function extractSourceName(url) {
-  try {
-    const u = new URL(url);
-    const host = u.hostname.replace('www.', '');
-    const parts = host.split('.');
-    // Return only the main name (e.g. engadget, gsmarena)
-    return parts.length > 2 ? parts[parts.length - 2] : parts[0];
-  } catch {
-    return 'Unknown';
-  }
-}
-
 async function rewriteWithOpenAI({ title, snippet, content, lang = 'ur' }) {
   const languageNote = lang === 'ur' ? 'Urdu (in Urdu/Urdu script)' : (lang === 'hi' ? 'Hindi (Devanagari)' : 'English');
-  const prompt = `You are a professional news editor. Rewrite the following GSMArena item into a short blog post suitable for publishing.
-- Keep the original title as reference.
-- Produce a 1-line hook (headline), then 3-6 sentences summary in ${languageNote}.
-- Make it unique, SEO-friendly, and avoid copying verbatim.
-- Add a short concluding sentence without hyperlink, just plain source text.
-- Return HTML-ready content only.`;
+  const prompt = `You are a professional news editor. Rewrite the following GSMArena item into a short blog post suitable for publishing.\n- Keep the original title as reference.\n- Produce a 1-line hook (headline), then 3-6 sentences summary in ${languageNote}.\n- Make it unique, SEO-friendly, and avoid copying verbatim.\n- Return HTML-ready content only.`;
 
   try {
     const completion = await openai.chat.completions.create({
@@ -203,8 +186,7 @@ async function processOnce() {
         finalHtml += `<p><img src="${imageUrl}" alt="${escapeHtml(title)}" style="max-width:100%;height:auto" /></p>\n`;
       }
       finalHtml += rewrittenHtml;
-      const sourceName = extractSourceName(link);
-      finalHtml += `\n<p><em>Source:</em> ${sourceName}</p>`;
+      // ⚡ Source line removed completely to avoid any hyperlink or text.
 
       let posted;
       try {
@@ -269,4 +251,3 @@ start().catch((e) => {
   log('Fatal error in start():', e?.message || e);
   process.exit(1);
 });
-   
