@@ -25,11 +25,13 @@ const REFRESH_TOKEN = process.env.REFRESH_TOKEN;
 const BLOG_ID = process.env.BLOG_ID;
 
 const GSMARENA_RSS = process.env.GSMARENA_RSS;
-const POST_INTERVAL_CRON = process.env.POST_INTERVAL_CRON || '0 * * * *';
-const MAX_ITEMS_PER_RUN = parseInt(process.env.MAX_ITEMS_PER_RUN || '3', 10);
+// CRON INTERVAL SET TO A SAFE 3-HOUR INTERVAL FOR TRIAL (8 RUNS/DAY)
+const POST_INTERVAL_CRON = process.env.POST_INTERVAL_CRON || '0 */3 * * *';
+// MAX ITEMS SET TO 1 TO AVOID BURSTING THE TRIAL LIMIT
+const MAX_ITEMS_PER_RUN = parseInt(process.env.MAX_ITEMS_PER_RUN || '1', 10);
 const OPENAI_MODEL = process.env.OPENAI_MODEL || 'gpt-4o-mini';
 const DB_PATH = process.env.DB_PATH || './data/posts.db';
-const MODE = (process.env.MODE || 'once').toLowerCase();
+const MODE = (process.env.MODE || 'cron').toLowerCase(); // Changed default mode to 'cron'
 const USER_AGENT = process.env.USER_AGENT || 'GSM2Blogger/1.0';
 
 if (!OPENAI_API_KEY) {
@@ -120,28 +122,39 @@ function extractMainArticle(html) {
 }
 
 async function rewriteWithOpenAI({ title, snippet, content }) {
-  const prompt = `You are a professional tech journalist. Rewrite the following article into a **complete English news post** for a blog.\n\nRules:\n- Write in English only.\n- Use a clear headline (H1).\n- Add subheadings (H2/H3) where relevant.\n- Expand the article fully if input is short.\n- Remove all hyperlinks.\n- Do not include strange or unrelated content.\n- Ensure SEO-friendly and natural writing style.\n- Keep it unique but true to the facts.\n- Return valid HTML only.`;
+  // UPDATED PROMPT: Focuses on SEO, Uniqueness, Length, and Clean HTML output.
+  const prompt = `You are a highly skilled SEO Content Writer. Rewrite the following article into a **unique, high-quality, and comprehensive English news post** for a professional tech blog.
+
+Rules for SEO and Originality:
+1.  **Originality First:** Your main goal is to generate content that is **NOT duplicate**. Paraphrase and restructure the input completely.
+2.  **Completeness/Depth:** The post must fully answer the user's intent. **Expand the topic to reach a minimum length of 1200 words** (unless the topic is extremely simple).
+3.  **Structure:** Use a compelling main headline (H1) and relevant, structured subheadings (H2, H3) for readability and SEO.
+4.  **Formatting:** Use standard HTML formatting (p, strong, ul, ol).
+5.  **Clean Output:** **DO NOT** include any links (hyperlinks/<a> tags). **DO NOT** include any introductory or concluding remarks outside the main article body.
+6.  **Language:** Write in professional, clear English only.
+7.  **Output Format:** Return **ONLY** the final HTML content for the article body.`;
 
   try {
     const completion = await openai.chat.completions.create({
       model: OPENAI_MODEL,
       messages: [{ role: 'user', content: `${prompt}\n\nTitle: ${title}\n\nSnippet: ${snippet || ''}\n\nContent:\n${content || ''}` }],
-      max_tokens: 1400
+      max_tokens: 2200 // Increased max_tokens to ensure long article generation (1200+ words)
     });
     let text = completion.choices?.[0]?.message?.content || '';
 
-    // Remove unwanted ...html or hyperlinks
+    // Existing cleanup steps (important for safety)
     text = text.replace(/\.\.\.\s*html/gi, '');
     text = text.replace(/<a [^>]*>(.*?)<\/a>/gi, '$1');
 
     return text;
   } catch (err) {
-    log('OpenAI error:', err?.message || err);
+    log('OpenAI rewrite error:', err?.message || err);
     throw err;
   }
 }
 
 async function generateImageAlt(title, snippet, content) {
+  // Model kept at gpt-4o-mini for cost-efficiency
   const prompt = `Generate a descriptive image alt text (5-10 words) that explains what the picture shows based on this article:\nTitle: ${title}\nSnippet: ${snippet}\nContent: ${content}\nOnly return alt text.`;
 
   try {
@@ -158,6 +171,7 @@ async function generateImageAlt(title, snippet, content) {
 }
 
 async function generateImageTitle(title, snippet, content) {
+  // Model kept at gpt-4o-mini for cost-efficiency
   const prompt = `Generate a short SEO-friendly title text (3-6 words) for an image in this article:\nTitle: ${title}\nSnippet: ${snippet}\nContent: ${content}\nOnly return title text.`;
 
   try {
@@ -174,6 +188,7 @@ async function generateImageTitle(title, snippet, content) {
 }
 
 async function generateTags(title, snippet, content) {
+  // Model kept at gpt-4o-mini for cost-efficiency
   const prompt = `Generate 3-6 SEO-friendly tags for this article. Return as comma-separated keywords only.\nTitle: ${title}\nSnippet: ${snippet}\nContent: ${content}`;
 
   try {
@@ -255,6 +270,7 @@ async function processOnce() {
       if (imageUrl) {
         const altText = await generateImageAlt(title, snippet, fullContent);
         const titleText = await generateImageTitle(title, snippet, fullContent);
+        // Image tag added here
         finalHtml += `<p><img src="${imageUrl}" alt="${escapeHtml(altText)}" title="${escapeHtml(titleText)}" style="max-width:100%;height:auto" /></p>\n`;
       }
       finalHtml += rewrittenHtml;
@@ -305,4 +321,3 @@ async function start() {
 }
 
 start().catch(e => { log('Fatal error:', e?.message || e); process.exit(1); });
-  
